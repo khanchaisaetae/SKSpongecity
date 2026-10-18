@@ -1,1 +1,682 @@
+<!DOCTYPE html>
+<html lang="th">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>3D Sponge City Simulation: เขาคอหงส์ - ถนนเพชรเกษม (หาดใหญ่)</title>
+  <style>
+    * { box-sizing: border-box; margin: 0; padding: 0; font-family: 'Sarabun', 'Segoe UI', Tahoma, sans-serif; }
+    body { background: #090d16; color: #f8fafc; overflow: hidden; }
+    #canvas-container { width: 100vw; height: 100vh; position: relative; }
 
+    /* แผงควบคุมด้านซ้าย */
+    #ui-panel {
+      position: absolute; top: 16px; left: 16px; width: 360px;
+      background: rgba(15, 23, 42, 0.9); backdrop-filter: blur(12px);
+      border: 1px solid rgba(56, 189, 248, 0.35); border-radius: 12px;
+      padding: 18px; z-index: 20; box-shadow: 0 12px 30px rgba(0,0,0,0.6);
+    }
+    h1 { font-size: 16.5px; color: #38bdf8; margin-bottom: 4px; }
+    .subtitle { font-size: 12px; color: #94a3b8; margin-bottom: 14px; line-height: 1.4; }
+
+    .control-group { margin-bottom: 12px; }
+    .control-group label { display: flex; justify-content: space-between; font-size: 12.5px; margin-bottom: 5px; color: #e2e8f0; }
+    input[type="range"] { width: 100%; accent-color: #38bdf8; cursor: pointer; }
+
+    .btn-row { display: flex; gap: 8px; margin-bottom: 10px; }
+    button {
+      flex: 1; padding: 8px 10px; border: 1px solid #334155; border-radius: 6px;
+      background: #1e293b; color: #e2e8f0; font-size: 12px; cursor: pointer;
+      transition: all 0.2s; font-weight: 600;
+    }
+    button:hover { background: #334155; }
+    button.active { background: #0284c7; border-color: #38bdf8; color: #fff; }
+    button.alert.active { background: #dc2626; border-color: #f87171; color: #fff; }
+
+    .metrics {
+      background: rgba(2, 6, 23, 0.75); border-radius: 8px; padding: 10px 12px;
+      font-size: 12px; border: 1px solid #1e293b; margin-top: 6px;
+    }
+    .metric-item { display: flex; justify-content: space-between; margin-bottom: 5px; }
+    .metric-item:last-child { margin-bottom: 0; }
+    .metric-val { font-weight: bold; color: #38bdf8; }
+    .metric-val.good { color: #4ade80; }
+    .metric-val.warn { color: #f87171; }
+
+    /* ป้ายชี้ Callout 3D */
+    #labels-container {
+      position: absolute; top: 0; left: 0; width: 100%; height: 100%;
+      pointer-events: none; overflow: hidden; z-index: 10;
+    }
+    .callout-label {
+      position: absolute; transform: translate(-50%, -50%);
+      background: rgba(15, 23, 42, 0.92); border-left: 4px solid #38bdf8;
+      padding: 6px 10px; border-radius: 5px; color: #f1f5f9;
+      font-size: 11.5px; white-space: nowrap; pointer-events: auto; cursor: pointer;
+      box-shadow: 0 4px 14px rgba(0,0,0,0.55); transition: transform 0.15s;
+    }
+    .callout-label.env-tag { border-left-color: #22c55e; background: rgba(6, 78, 59, 0.9); }
+    .callout-label.bldg-tag { border-left-color: #f59e0b; background: rgba(69, 26, 3, 0.9); }
+    .callout-label:hover { transform: translate(-50%, -50%) scale(1.06); z-index: 30; }
+    .callout-title { font-weight: bold; color: #38bdf8; display: block; }
+    .callout-label.env-tag .callout-title { color: #4ade80; }
+    .callout-label.bldg-tag .callout-title { color: #fbbf24; }
+    .callout-desc { font-size: 10.5px; color: #cbd5e1; }
+
+    #legend {
+      position: absolute; top: 16px; right: 16px;
+      background: rgba(15, 23, 42, 0.85); border: 1px solid #334155;
+      border-radius: 10px; padding: 12px; font-size: 12px; z-index: 20;
+    }
+    .legend-item { display: flex; align-items: center; gap: 8px; margin-bottom: 6px; }
+    .legend-item:last-child { margin-bottom: 0; }
+    .dot { width: 12px; height: 12px; border-radius: 50%; display: inline-block; }
+
+    #hint {
+      position: absolute; bottom: 14px; right: 16px;
+      background: rgba(15, 23, 42, 0.8); padding: 6px 14px;
+      border-radius: 20px; font-size: 12px; color: #94a3b8; z-index: 20;
+    }
+  </style>
+</head>
+<body>
+
+<div id="canvas-container">
+  <div id="labels-container"></div>
+
+  <div id="ui-panel">
+    <h1>จำลองน้ำหลากเขาคอหงส์ & Sponge City</h1>
+    <div class="subtitle">หน้าตัดภูมิศาสตร์: เชิงเขาคอหงส์ ➔ ถ.เพชรเกษม ➔ อาคารพาณิชย์ฝั่งตรงข้าม</div>
+
+    <div class="control-group">
+      <label><span>แยกชั้นโครงสร้างใต้ดิน (Exploded View)</span><span id="explode-val">60%</span></label>
+      <input type="range" id="explode-slider" min="0" max="100" value="60">
+    </div>
+
+    <div class="control-group">
+      <label><span>ความรุนแรงพายุฝน & น้ำป่า (มม./ชม.)</span><span id="rain-val">140 มม./ชม.</span></label>
+      <input type="range" id="rain-slider" min="0" max="200" value="140">
+    </div>
+
+    <div class="btn-row">
+      <button id="btn-sponge" class="active">โหมดเมืองฟองน้ำ (Sponge)</button>
+      <button id="btn-normal" class="alert">เมืองคอนกรีตเดิม (ท่วม)</button>
+    </div>
+
+    <div class="btn-row">
+      <button id="btn-labels" class="active">ซ่อน/แสดงป้ายชี้</button>
+      <button id="btn-reset">มุมกล้องเริ่มต้น</button>
+    </div>
+
+    <div class="metrics">
+      <div class="metric-item"><span>การดักน้ำหลากจากเขาคอหงส์:</span><span id="m-intercept" class="metric-val good">ดักลงร่อง Bioswale 85%</span></div>
+      <div class="metric-item"><span>ระดับน้ำบน ถ.เพชรเกษม:</span><span id="m-flood" class="metric-val good">0 ซม. (สัญจรได้ปกติ)</span></div>
+      <div class="metric-item"><span>ผลกระทบอาคารฝั่งตรงข้าม:</span><span id="m-bldg" class="metric-val good">ปลอดภัย (น้ำไม่เอ่อท่วม)</span></div>
+      <div class="metric-item"><span>ปริมาณน้ำในบ่อหน่วงใต้ดิน:</span><span id="m-tank" class="metric-val">70% (กำลังระบายสู่คลอง ร.1)</span></div>
+    </div>
+  </div>
+
+  <div id="legend">
+    <div style="font-weight:bold; margin-bottom:8px; color:#e2e8f0;">สัญลักษณ์การไหลของน้ำ</div>
+    <div class="legend-item"><span class="dot" style="background:#7dd3fc;"></span> น้ำฝนตกลงสู่พื้นที่ (Rainfall)</div>
+    <div class="legend-item"><span class="dot" style="background:#00ffcc;"></span> น้ำหลากจากเขาคอหงส์ & น้ำซึมลงดิน</div>
+    <div class="legend-item"><span class="dot" style="background:#0284c7;"></span> น้ำกักเก็บในบ่อรังผึ้งใต้ดิน</div>
+  </div>
+
+  <div id="hint">คลิกซ้ายค้างเพื่อหมุน 360° | ลูกกลิ้งเมาส์เพื่อซูม | คลิกขวาค้างเพื่อเลื่อนฉาก</div>
+</div>
+
+<!-- โหลด Three.js และ OrbitControls -->
+<script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/controls/OrbitControls.js"></script>
+
+<script>
+  const container = document.getElementById('canvas-container');
+  const labelsContainer = document.getElementById('labels-container');
+
+  // 1. ตั้งค่า Scene, Camera, Renderer
+  const scene = new THREE.Scene();
+  scene.background = new THREE.Color(0x090d16);
+
+  const camera = new THREE.PerspectiveCamera(42, window.innerWidth / window.innerHeight, 0.1, 1000);
+  camera.position.set(14, 15, 24);
+
+  const renderer = new THREE.WebGLRenderer({ antialias: true });
+  renderer.setSize(window.innerWidth, window.innerHeight);
+  renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+  renderer.shadowMap.enabled = true;
+  container.appendChild(renderer.domElement);
+
+  const controls = new THREE.OrbitControls(camera, renderer.domElement);
+  controls.enableDamping = true;
+  controls.target.set(0, 1.5, 0);
+
+  // 2. แสงสว่าง
+  scene.add(new THREE.AmbientLight(0xffffff, 0.65));
+  const dirLight = new THREE.DirectionalLight(0xffffff, 0.95);
+  dirLight.position.set(-15, 28, 18);
+  dirLight.castShadow = true;
+  scene.add(dirLight);
+
+  // 3. ข้อมูลชั้นโครงสร้าง 5 ชั้น (ตรงกลาง X = -4 ถึง +4)
+  const layerData = [
+    {
+      id: 5,
+      title: "ชั้นที่ 5: บ่อหน่วงน้ำใต้ดิน (Modular Detention Tank)",
+      desc: "ลึก 1.4–3.0 ม. | รับน้ำจากเขาคอหงส์มากักเก็บ ก่อนปล่อยลงคลอง ร.1",
+      baseY: -3.2, height: 1.4, anchorOffset: new THREE.Vector3(0, 0, 2.7), labelOffset: new THREE.Vector3(0, -0.3, 4.8), type: 'layer'
+    },
+    {
+      id: 4,
+      title: "ชั้นที่ 4: โครงข่ายท่อพรุนรับน้ำ (Perforated HDPE Pipe)",
+      desc: "ลึก 1.1–1.4 ม. | รวบรวมน้ำที่ซึมผ่านชั้นหินส่งเข้าบ่อรังผึ้ง",
+      baseY: -1.7, height: 0.6, anchorOffset: new THREE.Vector3(-2.5, 0, 2.7), labelOffset: new THREE.Vector3(-4.5, 0, 4.6), type: 'layer'
+    },
+    {
+      id: 3,
+      title: "ชั้นที่ 3: ชั้นหินเกล็ดชะลอน้ำ + แผ่นใยธรณี (Geotextile)",
+      desc: "ลึก 0.6–1.1 ม. | ความพรุน 40% ช่วยซับน้ำและป้องกันดินทรุด",
+      baseY: -0.9, height: 0.8, anchorOffset: new THREE.Vector3(2.5, 0, 2.7), labelOffset: new THREE.Vector3(4.5, 0, 4.6), type: 'layer'
+    },
+    {
+      id: 2,
+      title: "ชั้นที่ 2: ชั้นทรายและดินปลูกกรองมลพิษ (Filter Soil Bed)",
+      desc: "ลึก 0.2–0.6 ม. | ดักจับตะกอนดินโคลนที่ไหลมาจากเขาคอหงส์",
+      baseY: -0.1, height: 0.6, anchorOffset: new THREE.Vector3(-2.5, 0, -2.7), labelOffset: new THREE.Vector3(-4.5, 0, -4.6), type: 'layer'
+    },
+    {
+      id: 1,
+      title: "ชั้นที่ 1: ทางเท้าโปร่งน้ำ + ร่องสวนซับน้ำ (Bioswale) + ถ.เพชรเกษม",
+      desc: "ลึก 0–0.2 ม. | ดักมวลน้ำป่าจากเขาคอหงส์ไม่ให้ทะลักท่วมถนนและตึกแถว",
+      baseY: 0.6, height: 0.5, anchorOffset: new THREE.Vector3(0, 0.3, 2.7), labelOffset: new THREE.Vector3(0, 1.2, 4.8), type: 'layer'
+    }
+  ];
+
+  const layerGroups = [];
+  const calloutObjects = [];
+  let surfaceFloodMesh, tankWaterMesh, paverMat;
+
+  // สร้างชั้นโครงสร้างทั้ง 5 ชั้น
+  layerData.forEach(data => {
+    const group = new THREE.Group();
+    group.userData = data;
+
+    if (data.id === 5) {
+      const tankGeo = new THREE.BoxGeometry(8, data.height, 5.4);
+      const tankMat = new THREE.MeshPhongMaterial({ color: 0x0369a1, transparent: true, opacity: 0.35 });
+      group.add(new THREE.Mesh(tankGeo, tankMat));
+
+      const wire = new THREE.LineSegments(
+        new THREE.EdgesGeometry(tankGeo),
+        new THREE.LineBasicMaterial({ color: 0x38bdf8 })
+      );
+      group.add(wire);
+
+      const waterGeo = new THREE.BoxGeometry(7.8, data.height * 0.88, 5.2);
+      const waterMat = new THREE.MeshPhongMaterial({ color: 0x0ea5e9, transparent: true, opacity: 0.8 });
+      tankWaterMesh = new THREE.Mesh(waterGeo, waterMat);
+      tankWaterMesh.position.y = -0.05;
+      group.add(tankWaterMesh);
+
+      // ท่อระบายไปคลอง ร.1
+      const outPipe = new THREE.Mesh(
+        new THREE.CylinderGeometry(0.24, 0.24, 2.5, 16),
+        new THREE.MeshPhongMaterial({ color: 0x38bdf8 })
+      );
+      outPipe.rotation.x = Math.PI / 2;
+      outPipe.position.set(2.5, -0.3, -3.6);
+      group.add(outPipe);
+
+    } else if (data.id === 4) {
+      const bed = new THREE.Mesh(
+        new THREE.BoxGeometry(8, data.height, 5.4),
+        new THREE.MeshLambertMaterial({ color: 0x475569, transparent: true, opacity: 0.55 })
+      );
+      group.add(bed);
+
+      [-1.8, 0, 1.8].forEach(zPos => {
+        const pipe = new THREE.Mesh(
+          new THREE.CylinderGeometry(0.18, 0.18, 8.1, 16),
+          new THREE.MeshPhongMaterial({ color: 0x22d3ee })
+        );
+        pipe.rotation.z = Math.PI / 2;
+        pipe.position.set(0, 0, zPos);
+        group.add(pipe);
+      });
+
+    } else if (data.id === 3) {
+      const gravel = new THREE.Mesh(
+        new THREE.BoxGeometry(8, data.height, 5.4),
+        new THREE.MeshStandardMaterial({ color: 0x64748b, roughness: 0.9 })
+      );
+      group.add(gravel);
+
+      const geoSheet = new THREE.Mesh(
+        new THREE.BoxGeometry(8.05, 0.06, 5.45),
+        new THREE.MeshBasicMaterial({ color: 0xe2e8f0 })
+      );
+      geoSheet.position.y = data.height / 2 + 0.03;
+      group.add(geoSheet);
+
+    } else if (data.id === 2) {
+      const sand = new THREE.Mesh(
+        new THREE.BoxGeometry(8, data.height, 5.4),
+        new THREE.MeshStandardMaterial({ color: 0xd97706, roughness: 0.85 })
+      );
+      group.add(sand);
+
+    } else if (data.id === 1) {
+      // ชั้นที่ 1 (ซ้ายไปขวา):
+      // 1) ทางเท้าโปร่งน้ำรับน้ำจากเชิงเขาคอหงส์ (X: -4.0 ถึง -2.2)
+      paverMat = new THREE.MeshStandardMaterial({ color: 0x10b981, roughness: 0.6 });
+      const sidewalkLeft = new THREE.Mesh(new THREE.BoxGeometry(1.8, data.height, 5.4), paverMat);
+      sidewalkLeft.position.set(-3.1, 0, 0);
+      group.add(sidewalkLeft);
+
+      // 2) ร่องสวนซับน้ำ Bioswale (X: -2.2 ถึง -0.6) ยุบต่ำกว่าถนนเพื่อดักน้ำจากเขา
+      const swaleBase = new THREE.Mesh(
+        new THREE.BoxGeometry(1.6, data.height * 0.55, 5.4),
+        new THREE.MeshLambertMaterial({ color: 0x15803d })
+      );
+      swaleBase.position.set(-1.4, -0.12, 0);
+      group.add(swaleBase);
+
+      // พุ่มไม้และต้นไม้ในร่อง Bioswale
+      [-1.8, 0, 1.8].forEach(zPos => {
+        const trunk = new THREE.Mesh(new THREE.CylinderGeometry(0.08, 0.1, 0.5), new THREE.MeshLambertMaterial({ color: 0x78350f }));
+        trunk.position.set(-1.4, 0.25, zPos);
+        group.add(trunk);
+        const foliage = new THREE.Mesh(new THREE.ConeGeometry(0.5, 1.2, 8), new THREE.MeshLambertMaterial({ color: 0x22c55e }));
+        foliage.position.set(-1.4, 0.85, zPos);
+        group.add(foliage);
+      });
+
+      // 3) ผิวจราจรถนนเพชรเกษม (X: -0.6 ถึง +3.2)
+      const road = new THREE.Mesh(
+        new THREE.BoxGeometry(3.8, data.height, 5.4),
+        new THREE.MeshStandardMaterial({ color: 0x1e293b, roughness: 0.8 })
+      );
+      road.position.set(1.3, 0, 0);
+      group.add(road);
+
+      // เส้นจราจรประสีเหลืองขาวบนถนนเพชรเกษม
+      [-1.8, -0.6, 0.6, 1.8].forEach(zPos => {
+        const lineMark = new THREE.Mesh(
+          new THREE.BoxGeometry(0.12, 0.02, 0.7),
+          new THREE.MeshBasicMaterial({ color: 0xfacc15 })
+        );
+        lineMark.position.set(1.3, data.height / 2 + 0.01, zPos);
+        group.add(lineMark);
+      });
+
+      // 4) ทางเท้าหน้าตึกแถวฝั่งตรงข้าม (X: +3.2 ถึง +4.0)
+      const sidewalkRight = new THREE.Mesh(
+        new THREE.BoxGeometry(0.8, data.height + 0.08, 5.4),
+        new THREE.MeshStandardMaterial({ color: 0x94a3b8 })
+      );
+      sidewalkRight.position.set(3.6, 0.04, 0);
+      group.add(sidewalkRight);
+
+      // แผ่นน้ำท่วมขังบนถนนเพชรเกษมและเอ่อเข้าท่วมหน้าตึกแถว (เมื่อเป็นโหมดเมืองคอนกรีตเดิม)
+      surfaceFloodMesh = new THREE.Mesh(
+        new THREE.BoxGeometry(5.6, 0.42, 5.38),
+        new THREE.MeshPhongMaterial({ color: 0x0284c7, transparent: true, opacity: 0.0 })
+      );
+      surfaceFloodMesh.position.set(1.2, 0.36, 0);
+      group.add(surfaceFloodMesh);
+
+      // ======= สร้างโมเดลแนวลาดเขาคอหงส์ (ฝั่งซ้าย X: -4.0 ถึง -8.5) ติดกับชั้นที่ 1 =======
+      const hillGroup = new THREE.Group();
+      // รูปทรงลิ่มภูเขาลาดเอียงลงมาหาทางเท้าฝั่งซ้าย
+      const hillShape = new THREE.Shape();
+      hillShape.moveTo(-8.5, -0.25);
+      hillShape.lineTo(-4.0, -0.25);
+      hillShape.lineTo(-4.0, 0.28);
+      hillShape.lineTo(-6.2, 2.2);
+      hillShape.lineTo(-8.5, 4.4);
+      hillShape.closePath();
+
+      const extrudeSettings = { depth: 5.4, bevelEnabled: false };
+      const hillGeo = new THREE.ExtrudeGeometry(hillShape, extrudeSettings);
+      hillGeo.translate(0, 0, -2.7); // จัดกึ่งกลางแกน Z
+      const hillMat = new THREE.MeshLambertMaterial({ color: 0x166534 });
+      const hillMesh = new THREE.Mesh(hillGeo, hillMat);
+      hillGroup.add(hillMesh);
+
+      // ชั้นหินดินดานใต้เขาคอหงส์
+      const rockSub = new THREE.Mesh(
+        new THREE.BoxGeometry(4.5, 0.8, 5.4),
+        new THREE.MeshLambertMaterial({ color: 0x3f3f46 })
+      );
+      rockSub.position.set(-6.25, -0.65, 0);
+      hillGroup.add(rockSub);
+
+      // ต้นไม้ป่าบนแนวเขาคอหงส์
+      const treeCoords = [
+        [-7.8, 3.8, -1.8], [-7.4, 3.4, 0.5], [-7.9, 3.9, 1.9],
+        [-6.5, 2.5, -1.2], [-6.2, 2.2, 1.4], [-5.3, 1.4, -0.4]
+      ];
+      treeCoords.forEach(([tx, ty, tz]) => {
+        const tTrunk = new THREE.Mesh(new THREE.CylinderGeometry(0.1, 0.14, 0.6), new THREE.MeshLambertMaterial({ color: 0x5c4033 }));
+        tTrunk.position.set(tx, ty + 0.2, tz);
+        hillGroup.add(tTrunk);
+        const tCone = new THREE.Mesh(new THREE.ConeGeometry(0.65, 1.5, 7), new THREE.MeshLambertMaterial({ color: 0x15803d }));
+        tCone.position.set(tx, ty + 1.0, tz);
+        hillGroup.add(tCone);
+      });
+      group.add(hillGroup);
+
+      // ======= สร้างโมเดลอาคารพาณิชย์/ตึกแถวฝั่งตรงข้าม (ฝั่งขวา X: +4.0 ถึง +6.8) =======
+      const bldgGroup = new THREE.Group();
+      const bldgColors = [0xe2e8f0, 0xcbd5e1, 0xf1f5f9];
+      [-1.7, 0, 1.7].forEach((zPos, bIdx) => {
+        const bHeight = 2.8 + (bIdx % 2) * 0.6;
+        // ตัวตึกแถว
+        const bBox = new THREE.Mesh(
+          new THREE.BoxGeometry(2.4, bHeight, 1.65),
+          new THREE.MeshStandardMaterial({ color: bldgColors[bIdx], roughness: 0.7 })
+        );
+        bBox.position.set(5.2, bHeight / 2 - 0.2, zPos);
+        bldgGroup.add(bBox);
+
+        // หน้าต่างกระจกตึกแถว
+        for (let wy = 0.6; wy < bHeight - 0.4; wy += 0.75) {
+          const win = new THREE.Mesh(
+            new THREE.BoxGeometry(0.06, 0.42, 1.2),
+            new THREE.MeshBasicMaterial({ color: 0x38bdf8 })
+          );
+          win.position.set(3.99, wy, zPos);
+          bldgGroup.add(win);
+        }
+
+        // กันสาดหน้าตึกแถว
+        const awning = new THREE.Mesh(
+          new THREE.BoxGeometry(0.5, 0.08, 1.6),
+          new THREE.MeshLambertMaterial({ color: 0x0284c7 })
+        );
+        awning.position.set(3.8, 0.7, zPos);
+        bldgGroup.add(awning);
+
+        // สวนดาดฟ้า (Green Roof) บนตึกแถว
+        const greenRoof = new THREE.Mesh(
+          new THREE.BoxGeometry(2.1, 0.12, 1.4),
+          new THREE.MeshLambertMaterial({ color: 0x22c55e })
+        );
+        greenRoof.position.set(5.2, bHeight - 0.14, zPos);
+        bldgGroup.add(greenRoof);
+      });
+      group.add(bldgGroup);
+    }
+
+    scene.add(group);
+    layerGroups.push(group);
+    createCallout(group, data, '');
+  });
+
+  // เพิ่มป้ายชี้เฉพาะสำหรับ "แนวลาดเขาคอหงส์" และ "อาคารฝั่งตรงข้าม" (ผูกกับชั้นที่ 1)
+  const topLayerGroup = layerGroups[4];
+  createCallout(topLayerGroup, {
+    title: "แนวลาดเขาคอหงส์ (Khao Kho Hong Slope)",
+    desc: "ต้นกำเนิดมวลน้ำป่าไหลหลาก (Surface Runoff) ลงสู่ถนนเพชรเกษม",
+    anchorOffset: new THREE.Vector3(-6.8, 3.0, 0),
+    labelOffset: new THREE.Vector3(-8.5, 4.8, 0)
+  }, 'env-tag');
+
+  createCallout(topLayerGroup, {
+    title: "อาคารพาณิชย์/ตึกแถวฝั่งตรงข้าม + Green Roof",
+    desc: "ปลอดภัยจากน้ำท่วมขังเมื่อร่อง Bioswale ดักน้ำจากเขาลงใต้ดินได้ทัน",
+    anchorOffset: new THREE.Vector3(5.2, 2.6, 0),
+    labelOffset: new THREE.Vector3(7.2, 4.2, 0)
+  }, 'bldg-tag');
+
+  function createCallout(group, data, extraClass) {
+    const lineGeo = new THREE.BufferGeometry().setFromPoints([new THREE.Vector3(), new THREE.Vector3()]);
+    const lineColor = extraClass === 'env-tag' ? 0x4ade80 : (extraClass === 'bldg-tag' ? 0xfbbf24 : 0x38bdf8);
+    const line = new THREE.Line(lineGeo, new THREE.LineBasicMaterial({ color: lineColor }));
+    scene.add(line);
+
+    const dot = new THREE.Mesh(
+      new THREE.SphereGeometry(0.13, 12, 12),
+      new THREE.MeshBasicMaterial({ color: lineColor })
+    );
+    scene.add(dot);
+
+    const div = document.createElement('div');
+    div.className = `callout-label ${extraClass}`;
+    div.innerHTML = `<span class="callout-title">${data.title}</span><span class="callout-desc">${data.desc}</span>`;
+    labelsContainer.appendChild(div);
+
+    calloutObjects.push({ group, data, line, dot, div });
+  }
+
+  // 4. ระบบอนุภาคชุดที่ 1: เม็ดฝนตกจากท้องฟ้า (Sky Rainfall)
+  const rainCount = 280;
+  const rainGeo = new THREE.BufferGeometry();
+  const rainPos = new Float32Array(rainCount * 3);
+  for (let i = 0; i < rainCount; i++) {
+    rainPos[i * 3] = (Math.random() - 0.5) * 15 - 1;
+    rainPos[i * 3 + 1] = Math.random() * 10 + 1;
+    rainPos[i * 3 + 2] = (Math.random() - 0.5) * 5.2;
+  }
+  rainGeo.setAttribute('position', new THREE.BufferAttribute(rainPos, 3));
+  const rainSystem = new THREE.Points(
+    rainGeo,
+    new THREE.PointsMaterial({ color: 0x7dd3fc, size: 0.12, transparent: true, opacity: 0.75 })
+  );
+  scene.add(rainSystem);
+
+  // 5. ระบบอนุภาคชุดที่ 2: มวลน้ำหลากไหลบ่าจากเขาคอหงส์ลงสู่ร่อง Bioswale และซึมลงชั้นใต้ดิน (Hillslope Runoff Stream)
+  const runoffCount = 260;
+  const runoffGeo = new THREE.BufferGeometry();
+  const runoffPos = new Float32Array(runoffCount * 3);
+  const runoffProgress = new Float32Array(runoffCount); // 0.0 ถึง 1.0 ตามเส้นทางการไหล
+
+  for (let i = 0; i < runoffCount; i++) {
+    runoffProgress[i] = Math.random();
+    runoffPos[i * 3 + 2] = (Math.random() - 0.5) * 4.8; // กระจายตามความลึกแกน Z
+  }
+  runoffGeo.setAttribute('position', new THREE.BufferAttribute(runoffPos, 3));
+  const runoffSystem = new THREE.Points(
+    runoffGeo,
+    new THREE.PointsMaterial({ color: 0x00ffcc, size: 0.2, transparent: true, opacity: 0.95 })
+  );
+  scene.add(runoffSystem);
+
+  // 6. การควบคุม UI และสถานะ
+  let explodeFactor = 0.60;
+  let targetExplode = 0.60;
+  let rainIntensity = 140;
+  let isSpongeMode = true;
+  let showLabels = true;
+
+  const explodeSlider = document.getElementById('explode-slider');
+  const rainSlider = document.getElementById('rain-slider');
+  const btnSponge = document.getElementById('btn-sponge');
+  const btnNormal = document.getElementById('btn-normal');
+  const btnLabels = document.getElementById('btn-labels');
+  const btnReset = document.getElementById('btn-reset');
+
+  function updateMetricsUI() {
+    const mIntercept = document.getElementById('m-intercept');
+    const mFlood = document.getElementById('m-flood');
+    const mBldg = document.getElementById('m-bldg');
+    const mTank = document.getElementById('m-tank');
+
+    if (isSpongeMode) {
+      const tankLvl = Math.min(95, Math.round((rainIntensity / 200) * 92));
+      mIntercept.textContent = rainIntensity > 0 ? 'ดักลงร่อง Bioswale 85%' : 'ไม่มีฝน';
+      mIntercept.className = 'metric-val good';
+      mFlood.textContent = rainIntensity > 175 ? '2 ซม. (ระบายลงดินต่อเนื่อง)' : '0 ซม. (สัญจรได้ปกติ)';
+      mFlood.className = 'metric-val good';
+      mBldg.textContent = 'ปลอดภัย (น้ำไม่เอ่อท่วมฟุตบาท)';
+      mBldg.className = 'metric-val good';
+      mTank.textContent = `${tankLvl}% (กำลังระบายสู่คลอง ร.1)`;
+      paverMat.color.setHex(0x10b981);
+    } else {
+      const floodCm = Math.round((rainIntensity / 200) * 50);
+      mIntercept.textContent = '0% (น้ำป่าไหลทะลักข้ามถนน!)';
+      mIntercept.className = 'metric-val warn';
+      mFlood.textContent = `${floodCm} ซม. (ท่วมผิวจราจร ถ.เพชรเกษม)`;
+      mFlood.className = floodCm > 15 ? 'metric-val warn' : 'metric-val';
+      mBldg.textContent = floodCm > 20 ? 'น้ำทะลักเข้าท่วมชั้นล่างตึกแถว!' : 'น้ำเริ่มเอ่อท่วมทางเท้าหน้าตึก';
+      mBldg.className = 'metric-val warn';
+      mTank.textContent = '5% (น้ำซึมลงใต้ดินไม่ได้)';
+      paverMat.color.setHex(0x64748b);
+    }
+  }
+
+  explodeSlider.addEventListener('input', e => {
+    targetExplode = e.target.value / 100;
+    document.getElementById('explode-val').textContent = `${e.target.value}%`;
+  });
+
+  rainSlider.addEventListener('input', e => {
+    rainIntensity = parseInt(e.target.value, 10);
+    document.getElementById('rain-val').textContent = `${rainIntensity} มม./ชม.`;
+    updateMetricsUI();
+  });
+
+  btnSponge.addEventListener('click', () => {
+    isSpongeMode = true;
+    btnSponge.classList.add('active');
+    btnNormal.classList.remove('active');
+    updateMetricsUI();
+  });
+
+  btnNormal.addEventListener('click', () => {
+    isSpongeMode = false;
+    btnNormal.classList.add('active');
+    btnSponge.classList.remove('active');
+    updateMetricsUI();
+  });
+
+  btnLabels.addEventListener('click', () => {
+    showLabels = !showLabels;
+    btnLabels.classList.toggle('active', showLabels);
+    labelsContainer.style.display = showLabels ? 'block' : 'none';
+    calloutObjects.forEach(obj => {
+      obj.line.visible = showLabels;
+      obj.dot.visible = showLabels;
+    });
+  });
+
+  btnReset.addEventListener('click', () => {
+    camera.position.set(14, 15, 24);
+    controls.target.set(0, 1.5, 0);
+  });
+
+  // 7. ลูปแอนิเมชันหลัก
+  function animate() {
+    requestAnimationFrame(animate);
+    controls.update();
+
+    // อัปเดตตำแหน่งชั้นโครงสร้างตามสไลเดอร์ Exploded View
+    explodeFactor += (targetExplode - explodeFactor) * 0.08;
+    layerGroups.forEach((group, idx) => {
+      const data = group.userData;
+      const spreadOffset = (idx - 2) * 1.45 * explodeFactor;
+      group.position.y = data.baseY + spreadOffset;
+    });
+
+    const topSurfaceY = layerGroups[4].position.y;
+    const bottomTankY = layerGroups[0].position.y;
+
+    // อัปเดตน้ำในบ่อหน่วงและน้ำท่วมขังบนถนน
+    if (tankWaterMesh && surfaceFloodMesh) {
+      const targetTankScale = isSpongeMode ? Math.max(0.08, (rainIntensity / 200) * 0.95) : 0.08;
+      tankWaterMesh.scale.y += (targetTankScale - tankWaterMesh.scale.y) * 0.05;
+
+      const targetFloodOpacity = (!isSpongeMode && rainIntensity > 25) ? Math.min(0.82, (rainIntensity / 200) * 0.88) : 0.0;
+      surfaceFloodMesh.material.opacity += (targetFloodOpacity - surfaceFloodMesh.material.opacity) * 0.05;
+    }
+
+    // อัปเดตเม็ดฝนจากท้องฟ้า
+    const rPos = rainSystem.geometry.attributes.position.array;
+    const rainSpeed = (rainIntensity / 120) * 0.18;
+    rainSystem.visible = rainIntensity > 0;
+    for (let i = 0; i < rainCount; i++) {
+      rPos[i * 3 + 1] -= rainSpeed;
+      if (rPos[i * 3 + 1] < topSurfaceY) {
+        rPos[i * 3 + 1] = 10 + Math.random() * 3;
+      }
+    }
+    rainSystem.geometry.attributes.position.needsUpdate = true;
+
+    // อัปเดตอนุภาคน้ำป่าไหลหลากจากแนวเขาคอหงส์ (Hillslope Runoff)
+    const roPos = runoffSystem.geometry.attributes.position.array;
+    const flowStep = (rainIntensity / 140) * 0.008;
+    runoffSystem.visible = rainIntensity > 0;
+
+    for (let i = 0; i < runoffCount; i++) {
+      runoffProgress[i] += flowStep;
+      if (runoffProgress[i] > 1.0) runoffProgress[i] = 0.0;
+      const p = runoffProgress[i];
+
+      if (p < 0.4) {
+        // ช่วงที่ 1 (0.0 - 0.4): น้ำไหลบ่าลงตามความลาดชันของเขาคอหงส์ (X: -8.3 ➔ -4.0)
+        const t = p / 0.4;
+        roPos[i * 3] = -8.3 + t * 4.3;
+        roPos[i * 3 + 1] = topSurfaceY + (4.2 * (1 - t) + 0.35 * t);
+      } else if (isSpongeMode) {
+        // โหมดเมืองฟองน้ำ:
+        if (p < 0.55) {
+          // ช่วงที่ 2 (0.4 - 0.55): ไหลเข้าทางเท้าโปร่งน้ำและลงร่องสวนซับน้ำ Bioswale (X: -4.0 ➔ -1.4)
+          const t = (p - 0.4) / 0.15;
+          roPos[i * 3] = -4.0 + t * 2.6;
+          roPos[i * 3 + 1] = topSurfaceY + 0.35 * (1 - t);
+        } else {
+          // ช่วงที่ 3 (0.55 - 1.0): ซึมดิ่งลงผ่านชั้นทราย ชั้นหินเกล็ด ท่อพรุน ลงสู่บ่อรังผึ้งใต้ดิน
+          const t = (p - 0.55) / 0.45;
+          // กระจายตัวในชั้นกรองใต้ดินระหว่างทางเท้าโปร่งน้ำถึงร่อง Bioswale
+          roPos[i * 3] = -2.2 + Math.sin(i * 12.3) * 1.4;
+          roPos[i * 3 + 1] = topSurfaceY - t * (topSurfaceY - bottomTankY);
+        }
+      } else {
+        // โหมดเมืองคอนกรีตเดิม: น้ำซึมลงดินไม่ได้ ไหลทะลักข้ามถนนเพชรเกษมไปท่วมหน้าตึกแถวฝั่งตรงข้าม (X: -4.0 ➔ +3.8)
+        const t = (p - 0.4) / 0.6;
+        roPos[i * 3] = -4.0 + t * 7.8;
+        roPos[i * 3 + 1] = topSurfaceY + 0.38 + Math.sin(t * Math.PI * 4) * 0.06;
+      }
+    }
+    runoffSystem.geometry.attributes.position.needsUpdate = true;
+
+    // อัปเดตเส้นชี้ 3D Callout และป้ายชื่อภาษาไทย
+    calloutObjects.forEach(obj => {
+      const worldStart = new THREE.Vector3(
+        obj.data.anchorOffset.x,
+        obj.group.position.y + obj.data.anchorOffset.y,
+        obj.data.anchorOffset.z
+      );
+      const worldEnd = new THREE.Vector3(
+        obj.data.labelOffset.x,
+        obj.group.position.y + obj.data.labelOffset.y,
+        obj.data.labelOffset.z
+      );
+
+      obj.dot.position.copy(worldStart);
+      const linePositions = obj.line.geometry.attributes.position.array;
+      linePositions[0] = worldStart.x; linePositions[1] = worldStart.y; linePositions[2] = worldStart.z;
+      linePositions[3] = worldEnd.x;   linePositions[4] = worldEnd.y;   linePositions[5] = worldEnd.z;
+      obj.line.geometry.attributes.position.needsUpdate = true;
+
+      const projected = worldEnd.clone().project(camera);
+      const x = (projected.x * 0.5 + 0.5) * window.innerWidth;
+      const y = (-(projected.y * 0.5) + 0.5) * window.innerHeight;
+      obj.div.style.left = `${x}px`;
+      obj.div.style.top = `${y}px`;
+    });
+
+    renderer.render(scene, camera);
+  }
+
+  window.addEventListener('resize', () => {
+    camera.aspect = window.innerWidth / window.innerHeight;
+    camera.updateProjectionMatrix();
+    renderer.setSize(window.innerWidth, window.innerHeight);
+  });
+
+  updateMetricsUI();
+  animate();
+</script>
+</body>
+</html>
